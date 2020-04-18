@@ -225,4 +225,26 @@ QueueBase::GetMaxSize (void) const
   return m_maxSize;
 }
 
+//sijiang 20190920 thershold
+void
+QueueBase::SetThreshold (QueueSize size)
+{
+  NS_LOG_FUNCTION (this << size);
+
+  // do nothing if the size is null
+  /*if (!size.GetValue ())
+    {
+      return;
+    }
+    */
+  m_maxSize = size;
+}
+
+QueueSize
+QueueBase::GetThreshold (void) const
+{
+  NS_LOG_FUNCTION (this);
+  return m_maxSize;
+}
+
 } // namespace ns3

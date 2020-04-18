@@ -41,6 +41,14 @@ TypeId FifoQueueDisc::GetTypeId (void)
                    MakeQueueSizeAccessor (&QueueDisc::SetMaxSize,
                                           &QueueDisc::GetMaxSize),
                    MakeQueueSizeChecker ())
+    
+    // added by sijiang huang
+    .AddAttribute ("threshold",
+                   "The threshold",
+                   QueueSizeValue (QueueSize ("1000p")),
+                   MakeQueueSizeAccessor (&QueueDisc::SetThreshold,
+                                          &QueueDisc::GetThreshold),
+                   MakeQueueSizeChecker ())
   ;
   return tid;
 }
