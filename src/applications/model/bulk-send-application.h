@@ -119,8 +119,19 @@ private:
   uint64_t        m_totBytes;     //!< Total bytes sent so far
   TypeId          m_tid;          //!< The type of protocol to use.
 
+  //2019.10.10 by sijianghuang
+  uint32_t        m_prioritytag;     // priority of a flow
+
+  //2020.04.03 by sijianghuang
+  Address         m_local;        // local address
+  //end
+
   /// Traced Callback: sent packets
   TracedCallback<Ptr<const Packet> > m_txTrace;
+  
+  //2020.2.26 added by sijiang huang
+  TracedCallback<Time> m_startTrace;  
+  TracedCallback<Time> m_endTrace;  
 
 private:
   /**
@@ -137,6 +148,17 @@ private:
    * \brief Send more data as soon as some has been transmitted.
    */
   void DataSend (Ptr<Socket>, uint32_t); // for socket's SetSendCallback
+
+  /** 2020.02.26 by sijiang huang
+   * \brief Close Connection Succeeded (called by Socket through a callback)
+   * \param socket the closed socket
+   */
+  void CloseSucceeded (Ptr<Socket> socket);
+  /**
+   * \brief Close Connection Failed (called by Socket through a callback)
+   * \param socket the closed socket
+   */
+  void CloseFailed (Ptr<Socket> socket);
 };
 
 } // namespace ns3

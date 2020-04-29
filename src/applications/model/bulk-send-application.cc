@@ -31,215 +31,257 @@
 #include "ns3/tcp-socket-factory.h"
 #include "bulk-send-application.h"
 
-namespace ns3 {
+namespace ns3
+{
 
-NS_LOG_COMPONENT_DEFINE ("BulkSendApplication");
+NS_LOG_COMPONENT_DEFINE("BulkSendApplication");
 
-NS_OBJECT_ENSURE_REGISTERED (BulkSendApplication);
+NS_OBJECT_ENSURE_REGISTERED(BulkSendApplication);
 
 TypeId
-BulkSendApplication::GetTypeId (void)
+BulkSendApplication::GetTypeId(void)
 {
-  static TypeId tid = TypeId ("ns3::BulkSendApplication")
-    .SetParent<Application> ()
-    .SetGroupName("Applications") 
-    .AddConstructor<BulkSendApplication> ()
-    .AddAttribute ("SendSize", "The amount of data to send each time.",
-                   UintegerValue (512),
-                   MakeUintegerAccessor (&BulkSendApplication::m_sendSize),
-                   MakeUintegerChecker<uint32_t> (1))
-    .AddAttribute ("Remote", "The address of the destination",
-                   AddressValue (),
-                   MakeAddressAccessor (&BulkSendApplication::m_peer),
-                   MakeAddressChecker ())
-    .AddAttribute ("MaxBytes",
-                   "The total number of bytes to send. "
-                   "Once these bytes are sent, "
-                   "no data  is sent again. The value zero means "
-                   "that there is no limit.",
-                   UintegerValue (0),
-                   MakeUintegerAccessor (&BulkSendApplication::m_maxBytes),
-                   MakeUintegerChecker<uint64_t> ())
-    .AddAttribute ("Protocol", "The type of protocol to use.",
-                   TypeIdValue (TcpSocketFactory::GetTypeId ()),
-                   MakeTypeIdAccessor (&BulkSendApplication::m_tid),
-                   MakeTypeIdChecker ())
-    .AddTraceSource ("Tx", "A new packet is created and is sent",
-                     MakeTraceSourceAccessor (&BulkSendApplication::m_txTrace),
-                     "ns3::Packet::TracedCallback")
-  ;
-  return tid;
+    static TypeId tid = TypeId("ns3::BulkSendApplication")
+                            .SetParent<Application>()
+                            .SetGroupName("Applications")
+                            .AddConstructor<BulkSendApplication>()
+                            .AddAttribute("SendSize", "The amount of data to send each time.",
+                                          UintegerValue(512),
+                                          MakeUintegerAccessor(&BulkSendApplication::m_sendSize),
+                                          MakeUintegerChecker<uint32_t>(1))
+                            .AddAttribute("Remote", "The address of the destination",
+                                          AddressValue(),
+                                          MakeAddressAccessor(&BulkSendApplication::m_peer),
+                                          MakeAddressChecker())
+                            .AddAttribute("MaxBytes",
+                                          "The total number of bytes to send. "
+                                          "Once these bytes are sent, "
+                                          "no data  is sent again. The value zero means "
+                                          "that there is no limit.",
+                                          UintegerValue(0),
+                                          MakeUintegerAccessor(&BulkSendApplication::m_maxBytes),
+                                          MakeUintegerChecker<uint64_t>())
+                            .AddAttribute("Protocol", "The type of protocol to use.",
+                                          TypeIdValue(TcpSocketFactory::GetTypeId()),
+                                          MakeTypeIdAccessor(&BulkSendApplication::m_tid),
+                                          MakeTypeIdChecker())
+                            .AddTraceSource("Tx", "A new packet is created and is sent",
+                                            MakeTraceSourceAccessor(&BulkSendApplication::m_txTrace),
+                                            "ns3::Packet::TracedCallback")
+
+                            //2019.10.10 added by sijiang huang
+                            //Add prioritytag as a attribute
+                            .AddAttribute("PriorityTag", "The prioritytag of a flow",
+                                          UintegerValue(0),
+                                          MakeUintegerAccessor(&BulkSendApplication::m_prioritytag),
+                                          MakeUintegerChecker<uint32_t>())
+
+                            //2020.04.03 added by sijiang huang
+                            //Add local address as a attribute
+                            .AddAttribute("LocalAddress", "The address of the destination",
+                                          AddressValue(),
+                                          MakeAddressAccessor(&BulkSendApplication::m_local),
+                                          MakeAddressChecker())
+
+                            //2020.02.26 added by sijiang huang
+                            .AddTraceSource("StartTime",
+                                            "Start time of the bulk send application",
+                                            MakeTraceSourceAccessor(&BulkSendApplication::m_startTrace),
+                                            "ns3::Time::TracedCallback")
+                            .AddTraceSource("EndTime",
+                                            "End time of the bulk send application",
+                                            MakeTraceSourceAccessor(&BulkSendApplication::m_endTrace),
+                                            "ns3::Time::TracedCallback")
+        //end
+        ;
+    return tid;
 }
 
-
-BulkSendApplication::BulkSendApplication ()
-  : m_socket (0),
-    m_connected (false),
-    m_totBytes (0)
+BulkSendApplication::BulkSendApplication()
+    : m_socket(0),
+      m_connected(false),
+      m_totBytes(0)
 {
-  NS_LOG_FUNCTION (this);
+    NS_LOG_FUNCTION(this);
 }
 
-BulkSendApplication::~BulkSendApplication ()
+BulkSendApplication::~BulkSendApplication()
 {
-  NS_LOG_FUNCTION (this);
+    NS_LOG_FUNCTION(this);
 }
 
-void
-BulkSendApplication::SetMaxBytes (uint64_t maxBytes)
+void BulkSendApplication::SetMaxBytes(uint64_t maxBytes)
 {
-  NS_LOG_FUNCTION (this << maxBytes);
-  m_maxBytes = maxBytes;
+    NS_LOG_FUNCTION(this << maxBytes);
+    m_maxBytes = maxBytes;
 }
 
 Ptr<Socket>
-BulkSendApplication::GetSocket (void) const
+BulkSendApplication::GetSocket(void) const
 {
-  NS_LOG_FUNCTION (this);
-  return m_socket;
+    NS_LOG_FUNCTION(this);
+    return m_socket;
 }
 
-void
-BulkSendApplication::DoDispose (void)
+void BulkSendApplication::DoDispose(void)
 {
-  NS_LOG_FUNCTION (this);
+    NS_LOG_FUNCTION(this);
 
-  m_socket = 0;
-  // chain up
-  Application::DoDispose ();
+    m_socket = 0;
+    // chain up
+    Application::DoDispose();
 }
 
 // Application Methods
-void BulkSendApplication::StartApplication (void) // Called at time specified by Start
+void BulkSendApplication::StartApplication(void) // Called at time specified by Start
 {
-  NS_LOG_FUNCTION (this);
+    NS_LOG_FUNCTION(this);
 
-  // Create the socket if not already
-  if (!m_socket)
+    // Create the socket if not already
+    if (!m_socket)
     {
-      m_socket = Socket::CreateSocket (GetNode (), m_tid);
+        m_socket = Socket::CreateSocket(GetNode(), m_tid);
 
-      // Fatal error if socket type is not NS3_SOCK_STREAM or NS3_SOCK_SEQPACKET
-      if (m_socket->GetSocketType () != Socket::NS3_SOCK_STREAM &&
-          m_socket->GetSocketType () != Socket::NS3_SOCK_SEQPACKET)
+        // Fatal error if socket type is not NS3_SOCK_STREAM or NS3_SOCK_SEQPACKET
+        if (m_socket->GetSocketType() != Socket::NS3_SOCK_STREAM &&
+            m_socket->GetSocketType() != Socket::NS3_SOCK_SEQPACKET)
         {
-          NS_FATAL_ERROR ("Using BulkSend with an incompatible socket type. "
-                          "BulkSend requires SOCK_STREAM or SOCK_SEQPACKET. "
-                          "In other words, use TCP instead of UDP.");
+            NS_FATAL_ERROR("Using BulkSend with an incompatible socket type. "
+                           "BulkSend requires SOCK_STREAM or SOCK_SEQPACKET. "
+                           "In other words, use TCP instead of UDP.");
         }
 
-      if (Inet6SocketAddress::IsMatchingType (m_peer))
+        if (Inet6SocketAddress::IsMatchingType(m_peer))
         {
-          if (m_socket->Bind6 () == -1)
+            if (m_socket->Bind6() == -1)
             {
-              NS_FATAL_ERROR ("Failed to bind socket");
+                NS_FATAL_ERROR("Failed to bind socket");
             }
         }
-      else if (InetSocketAddress::IsMatchingType (m_peer))
+        else if (InetSocketAddress::IsMatchingType(m_peer))
         {
-          if (m_socket->Bind () == -1)
+            if (m_socket->Bind(m_local) == -1)
             {
-              NS_FATAL_ERROR ("Failed to bind socket");
+                NS_FATAL_ERROR("Failed to bind socket");
             }
         }
 
-      m_socket->Connect (m_peer);
-      m_socket->ShutdownRecv ();
-      m_socket->SetConnectCallback (
-        MakeCallback (&BulkSendApplication::ConnectionSucceeded, this),
-        MakeCallback (&BulkSendApplication::ConnectionFailed, this));
-      m_socket->SetSendCallback (
-        MakeCallback (&BulkSendApplication::DataSend, this));
+        m_socket->Connect(m_peer);
+        m_socket->ShutdownRecv();
+        m_socket->SetConnectCallback(
+            MakeCallback(&BulkSendApplication::ConnectionSucceeded, this),
+            MakeCallback(&BulkSendApplication::ConnectionFailed, this));
+        m_socket->SetSendCallback(
+            MakeCallback(&BulkSendApplication::DataSend, this));
+
+        //2020.02.26 added by sijiang huang
+        m_startTrace(Simulator::Now());
+        m_socket->SetCloseCallbacks(
+            MakeCallback(&BulkSendApplication::CloseSucceeded, this),
+            MakeCallback(&BulkSendApplication::CloseFailed, this));
     }
-  if (m_connected)
+    if (m_connected)
     {
-      SendData ();
+        SendData();
     }
 }
 
-void BulkSendApplication::StopApplication (void) // Called at time specified by Stop
+void BulkSendApplication::StopApplication(void) // Called at time specified by Stop
 {
-  NS_LOG_FUNCTION (this);
+    NS_LOG_FUNCTION(this);
 
-  if (m_socket != 0)
+    if (m_socket != 0)
     {
-      m_socket->Close ();
-      m_connected = false;
+        m_socket->Close();
+        m_connected = false;
     }
-  else
+    else
     {
-      NS_LOG_WARN ("BulkSendApplication found null socket to close in StopApplication");
+        NS_LOG_WARN("BulkSendApplication found null socket to close in StopApplication");
     }
 }
-
 
 // Private helpers
 
-void BulkSendApplication::SendData (void)
+void BulkSendApplication::SendData(void)
 {
-  NS_LOG_FUNCTION (this);
+    NS_LOG_FUNCTION(this);
 
-  while (m_maxBytes == 0 || m_totBytes < m_maxBytes)
+    while (m_maxBytes == 0 || m_totBytes < m_maxBytes)
     { // Time to send more
 
-      // uint64_t to allow the comparison later.
-      // the result is in a uint32_t range anyway, because
-      // m_sendSize is uint32_t.
-      uint64_t toSend = m_sendSize;
-      // Make sure we don't send too many
-      if (m_maxBytes > 0)
+        // uint64_t to allow the comparison later.
+        // the result is in a uint32_t range anyway, because
+        // m_sendSize is uint32_t.
+        uint64_t toSend = m_sendSize;
+        // Make sure we don't send too many
+
+        if (m_maxBytes > 0)
         {
-          toSend = std::min (toSend, m_maxBytes - m_totBytes);
+            toSend = std::min(toSend, m_maxBytes - m_totBytes);
         }
 
-      NS_LOG_LOGIC ("sending packet at " << Simulator::Now ());
-      Ptr<Packet> packet = Create<Packet> (toSend);
-      int actual = m_socket->Send (packet);
-      if (actual > 0)
+        NS_LOG_LOGIC("sending packet at " << Simulator::Now());
+        Ptr<Packet> packet = Create<Packet>(toSend);
+        m_socket->SetPriority(m_prioritytag & 0x07);
+        int actual = m_socket->Send(packet);
+        if (actual > 0)
         {
-          m_totBytes += actual;
-          m_txTrace (packet);
+            m_totBytes += actual;
+            m_txTrace(packet);
         }
-      // We exit this loop when actual < toSend as the send side
-      // buffer is full. The "DataSent" callback will pop when
-      // some buffer space has freed ip.
-      if ((unsigned)actual != toSend)
+        // We exit this loop when actual < toSend as the send side
+        // buffer is full. The "DataSent" callback will pop when
+        // some buffer space has freed ip.
+        if ((unsigned)actual != toSend)
         {
-          break;
+            break;
         }
     }
-  // Check if time to close (all sent)
-  if (m_totBytes == m_maxBytes && m_connected)
+    // Check if time to close (all sent)
+    if (m_totBytes == m_maxBytes && m_connected)
     {
-      m_socket->Close ();
-      m_connected = false;
+        m_socket->Close();
+        m_connected = false;
     }
 }
 
-void BulkSendApplication::ConnectionSucceeded (Ptr<Socket> socket)
+void BulkSendApplication::ConnectionSucceeded(Ptr<Socket> socket)
 {
-  NS_LOG_FUNCTION (this << socket);
-  NS_LOG_LOGIC ("BulkSendApplication Connection succeeded");
-  m_connected = true;
-  SendData ();
+    NS_LOG_FUNCTION(this << socket);
+    NS_LOG_LOGIC("BulkSendApplication Connection succeeded");
+    m_connected = true;
+    SendData();
 }
 
-void BulkSendApplication::ConnectionFailed (Ptr<Socket> socket)
+void BulkSendApplication::ConnectionFailed(Ptr<Socket> socket)
 {
-  NS_LOG_FUNCTION (this << socket);
-  NS_LOG_LOGIC ("BulkSendApplication, Connection Failed");
+    NS_LOG_FUNCTION(this << socket);
+    NS_LOG_LOGIC("BulkSendApplication, Connection Failed");
 }
 
-void BulkSendApplication::DataSend (Ptr<Socket>, uint32_t)
+void BulkSendApplication::DataSend(Ptr<Socket>, uint32_t)
 {
-  NS_LOG_FUNCTION (this);
+    NS_LOG_FUNCTION(this);
 
-  if (m_connected)
+    if (m_connected)
     { // Only send new data if the connection has completed
-      SendData ();
+        SendData();
     }
 }
 
+//2020.02.26 by sijiang
+void BulkSendApplication::CloseSucceeded(Ptr<Socket> socket)
+{
+    NS_LOG_FUNCTION(this << socket);
+    NS_LOG_LOGIC("BulkSendApplication Connection Closed");
+    m_endTrace(Simulator::Now());
+}
 
+void BulkSendApplication::CloseFailed(Ptr<Socket> socket)
+{
+    NS_LOG_FUNCTION(this << socket);
+    NS_LOG_LOGIC("BulkSendApplication, Connection Fail to Close");
+}
 
 } // Namespace ns3
