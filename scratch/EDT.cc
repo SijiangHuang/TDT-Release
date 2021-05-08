@@ -55,7 +55,7 @@ std::vector<uint32_t> PortPass(nPorts, 0);
 std::vector<uint32_t> PortLoss(nPorts, 0);
 std::vector<uint32_t> PacketsInPort(nPorts, 0);
 
-uint32_t sampleInterval = 5;
+uint32_t sampleInterval = 1;
 uint32_t sampleCounter = 0;
 
 // EDT variables
@@ -120,6 +120,7 @@ void TcPacketsInQueueTrace(Ptr<OutputStreamWrapper> pfile, QueueDiscContainer *q
                 timer2[pos].Cancel();
             }
         }
+        *pfile->GetStream() << 4 << " " << pos << " " << Simulator::Now().GetSeconds() << " " << oldValue - newValue << std::endl;
     }
     // packet enqueue event
     else
@@ -151,7 +152,9 @@ void TcPacketsInQueueTrace(Ptr<OutputStreamWrapper> pfile, QueueDiscContainer *q
         timer1[pos].SetArguments(pos);
         timer1[pos].SetDelay(MilliSeconds(T1));
         timer1[pos].Schedule();
+        Flag[pos] = isUncontrolled[pos];
     }
+    
 
     uint32_t sumPackets = 0;
     Ptr<QueueDisc> q = qdisc[pos].Get(0);
@@ -217,6 +220,7 @@ void Drop(Ptr<OutputStreamWrapper> pfile, Ptr<QueueDisc> q, uint32_t pos, Ptr<co
     if (q->GetTotalBufferSize() == buffer)
     {
         isUncontrolled[pos] = false;
+        Flag[pos] = false;
         if (timer2[pos].IsRunning())
         {
             timer2[pos].Cancel();
@@ -360,10 +364,16 @@ int main(int argc, char *argv[])
     // pointToPoint.EnablePcapAll ("baselines");
 
     FlowMonitorHelper flowmon;
+    flowmon.SetMonitorAttribute("DelayBinWidth", DoubleValue(0.0001));
     Ptr<FlowMonitor> monitor = flowmon.InstallAll();
 
     Simulator::Stop(Seconds(simulationTime));
     Simulator::Run();
+
+    for (uint32_t i = 0; i < nPorts; i++)
+    {
+        ofile << 0 << " " << i << " " << PortPass[i] + PortLoss[i] << " " << PortPass[i] << " 0 0" << std::endl;
+    }
 
     monitor->CheckForLostPackets();
     Ptr<Ipv4FlowClassifier> classifier = DynamicCast<Ipv4FlowClassifier>(flowmon.GetClassifier());
@@ -382,8 +392,19 @@ int main(int argc, char *argv[])
         // std::cout << "  Throughput: " << i->second.rxBytes * 8.0 / (i->second.timeLastRxPacket - i->second.timeFirstTxPacket).GetSeconds() / 1024 / 1024 << " Mbps\n";
         // std::cout << "  StartTime:  " << i->second.timeFirstTxPacket.GetSeconds() << "\n";
         // std::cout << "  EndTime:    " << i->second.timeLastRxPacket.GetSeconds() << "\n";
-        ofile << t.destinationPort - servPort << " " << i->second.timeFirstTxPacket.GetSeconds()
+        ofile << 1 << " " << t.destinationPort - servPort << " " << i->second.timeFirstTxPacket.GetSeconds()
               << " " << i->second.timeLastTxPacket.GetSeconds() << " " << i->second.txPackets << " " << i->second.rxPackets << std::endl;
+        ns3::Histogram h = i->second.delayHistogram;
+        uint32_t nBins = h.GetNBins();
+        for (uint32_t i = 0; i < nBins; i++)
+        {
+            ofile << 2 << " " << t.destinationPort - servPort << " " << i << " " << h.GetBinStart(i) << " " << h.GetBinEnd(i) << " "
+                  << " " << h.GetBinCount(i) << std::endl;
+        }
+        ofile << 3 << " " << t.destinationPort - servPort << " " << i->second.rxBytes << " "
+              << i->second.timeFirstTxPacket.GetSeconds()
+              << " " << i->second.timeLastRxPacket.GetSeconds() << " "
+              << " " << i->second.rxBytes * 8.0 / (i->second.timeLastRxPacket - i->second.timeFirstTxPacket).GetSeconds() << std::endl;
     }
 
     Simulator::Destroy();

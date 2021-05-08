@@ -37,7 +37,7 @@
 
 using namespace ns3;
 
-NS_LOG_COMPONENT_DEFINE("pushout");
+NS_LOG_COMPONENT_DEFINE("TDT");
 
 // topology variables
 uint32_t nPorts = 16;
@@ -52,40 +52,103 @@ uint32_t sampleInterval = 5;
 uint32_t sampleCounter = 0;
 
 // buffer variables
-std::string algo = "PO";
+std::string algo = "TDT";
 uint32_t segmentSize = 1448;
 uint32_t buffer = 175; // 0.25MB
-uint32_t longestQueue = 0;
-float alpha = 1.0;
+
+// TDT variables
+std::vector<uint32_t> dequeueCounter(nPorts, 0);
+std::vector<uint32_t> netEnqueueCounter(nPorts, 0);
+std::vector<uint32_t> lineRateCounter1(nPorts, 0);
+std::vector<uint32_t> lineRateCounter2(nPorts, 0);
+std::vector<uint32_t> dropCounter(nPorts, 0);
+std::vector<bool> edtFlag(nPorts, false);
+uint32_t dcThres = 3, necThres = 8, lrc1Thres = 200, lrc2Thres = 1000, dropThres = 100;
+float baseAlpha = 1.0;
+float edtAlpha = 32.0;
+float lbAlpha = 1.0 / 16;
+std::vector<float> alpha(nPorts, baseAlpha);
 
 void TcPacketsInQueueTrace(Ptr<OutputStreamWrapper> pfile, QueueDiscContainer *qdisc, uint32_t pos, uint32_t oldValue, uint32_t newValue)
 {
+    // std::cout << "--------" << std::endl;
+    // std::cout << "Time: " << Simulator::Now().GetSeconds() << std::endl;
+    // packet dequeue event
     if (oldValue > newValue)
     {
         PortPass[pos] += oldValue - newValue;
+        dequeueCounter[pos]++;
+        if (dequeueCounter[pos] == dcThres)
+        {
+            // std::cout << "Dequeue Trigger: " << dequeueCounter[pos] << std::endl;
+            netEnqueueCounter[pos] = 0;
+            alpha[pos] = baseAlpha;
+            lineRateCounter2[pos] = 0;
+            edtFlag[pos] = false;
+        }
+        netEnqueueCounter[pos] = netEnqueueCounter[pos] > 0 ? netEnqueueCounter[pos] - 1 : 0;
+        lineRateCounter1[pos]++;
+        if (lineRateCounter1[pos] == lrc1Thres)
+        {
+            // std::cout << "lineRateCounter1 Trigger: " << lineRateCounter1[pos] << std::endl;
+            dropCounter[pos] = 0;
+            lineRateCounter1[pos] = 0;
+            edtFlag[pos] = true;
+        }
+        if (alpha[pos] == edtAlpha)
+        {
+            lineRateCounter2[pos]++;
+            if (lineRateCounter2[pos] == lrc2Thres)
+            {
+                // std::cout << "lineRateCounter2 Trigger: " << lineRateCounter2[pos] << std::endl;
+                alpha[pos] = baseAlpha;
+                edtFlag[pos] = false;
+            }
+        }
+
+        // std::cout << "dequeueCounter: " << dequeueCounter[pos] << std::endl;
+        // std::cout << "netEnqueueCounter: " << netEnqueueCounter[pos] << std::endl;
+        // std::cout << "lineRateCounter1: " << lineRateCounter1[pos] << std::endl;
+        // std::cout << "lineRateCounter2: " << lineRateCounter2[pos] << std::endl;
     }
+    // packet enqueue event
+    else
+    {
+        dequeueCounter[pos] = 0;
+        netEnqueueCounter[pos]++;
+        if (netEnqueueCounter[pos] == necThres)
+        {
+            alpha[pos] = edtAlpha;
+            edtFlag[pos] = true;
+        }
+        *pfile->GetStream() << 1 << " " << pos << " " << Simulator::Now().GetSeconds() << " " << newValue - oldValue << std::endl;
+
+        // std::cout << "dequeueCounter: " << dequeueCounter[pos] << std::endl;
+        // std::cout << "netEnqueueCounter: " << netEnqueueCounter[pos] << std::endl;
+        // std::cout << "lineRateCounter1: " << lineRateCounter1[pos] << std::endl;
+        // std::cout << "lineRateCounter2: " << lineRateCounter2[pos] << std::endl;
+    }
+
+    if (edtFlag[pos])
+    {
+        netEnqueueCounter[pos] = 0;
+        lineRateCounter1[pos] = 0;
+    }
+    else
+    {
+        dequeueCounter[pos] = 0;
+    }
+
     uint32_t sumPackets = 0;
     Ptr<QueueDisc> q = qdisc[pos].Get(0);
-    PacketsInPort[pos] += newValue - oldValue;
+    PacketsInPort[pos] = newValue;
     // std::cout << "Queue Length: ";
     for (uint32_t i = 0; i < nPorts; i++)
     {
         sumPackets += PacketsInPort[i];
-        if (PacketsInPort[i] > PacketsInPort[longestQueue])
-        {
-            longestQueue = i;
-        }
         // std::cout << PacketsInPort[i] << " ";
     }
     // std::cout << std::endl;
-
-    if (sumPackets == buffer + 1)
-    {
-        q = qdisc[longestQueue].Get(0);
-        Ptr<Queue<QueueDiscItem>> iq = q->GetInternalQueue(0);
-        Ptr<QueueDiscItem> p = iq->Remove();
-        sumPackets--;
-    }
     q->SetTotalBufferUse(sumPackets);
 
     // *pfile->GetStream() << 0 << " " << pos << " " << Simulator::Now().GetSeconds() << " " << PacketsInPort[pos] << std::endl;
@@ -99,12 +162,62 @@ void TcPacketsInQueueTrace(Ptr<OutputStreamWrapper> pfile, QueueDiscContainer *q
         }
         *pfile->GetStream() << 0 << " " << nPorts << " " << Simulator::Now().GetSeconds() << " " << sumPackets << std::endl;
     }
+
+    // uint32_t threshold = buffer;
+    // if (algo == "DT" || algo == "EDT")
+    // {
+    //     threshold = (buffer > sumBytes) ? (alpha * (buffer - sumBytes)) : 0;
+    // }
+    // else if (algo == "ST")
+    // {
+    //     threshold = buffer / nPorts;
+    // }
+
+    // std::cout << "Alpha: ";
+    for (uint32_t i = 0; i < nPorts; i++)
+    {
+        q = qdisc[i].Get(0);
+        uint32_t threshold = (buffer > sumPackets) ? (alpha[i] * (buffer - sumPackets)) : 0;
+        // std::cout << alpha[i] << "(" << threshold << ") ";
+        q->SetThreshold(QueueSize(QueueSizeUnit::PACKETS, threshold));
+        if (alpha[i] < baseAlpha && threshold > 2 * PacketsInPort[i])
+        {
+            alpha[i] = baseAlpha;
+            dropCounter[i] = 0;
+        }
+    }
+    // std::cout << std::endl;
 }
 
 void Drop(Ptr<OutputStreamWrapper> pfile, Ptr<QueueDisc> q, uint32_t pos, Ptr<const QueueDiscItem> p)
 {
+    // std::cout << "=========" << std::endl;
+    // std::cout << "Drop: " << Simulator::Now().GetSeconds() << std::endl;
+
+    if (q->GetTotalBufferUse() == buffer)
+    {
+        alpha[pos] = baseAlpha;
+        lineRateCounter2[pos] = 0;
+        edtFlag[pos] = false;
+    }
+    netEnqueueCounter[pos] = 0;
     PortLoss[pos]++;
+    dropCounter[pos]++;
+    if (dropCounter[pos] == dropThres)
+    {
+        // std::cout << "Load Trigger" << std::endl;
+        edtFlag[pos] = false;
+        dropCounter[pos] = 0;
+        alpha[pos] = alpha[pos] / 2 > lbAlpha ? alpha[pos] / 2 : lbAlpha;
+    }
     *pfile->GetStream() << 1 << " " << pos << " " << Simulator::Now().GetSeconds() << " " << -1 << std::endl;
+
+    // std::cout << "dropCounter: " << dropCounter[pos] << std::endl;
+    // std::cout << "dequeueCounter: " << dequeueCounter[pos] << std::endl;
+    // std::cout << "netEnqueueCounter: " << netEnqueueCounter[pos] << std::endl;
+    // std::cout << "lineRateCounter1: " << lineRateCounter1[pos] << std::endl;
+    // std::cout << "lineRateCounter2: " << lineRateCounter2[pos] << std::endl;
+    // std::cout << Simulator::Now().GetSeconds() << " packet size of " << p->GetPacket()->GetSize() << " dropped in port " << pos << std::endl;
 }
 
 int main(int argc, char *argv[])
@@ -130,7 +243,7 @@ int main(int argc, char *argv[])
     std::string plotFile = "data/plot.txt";
 
     CommandLine cmd;
-    cmd.AddValue("algorithm", "Default: PO", algo);
+    cmd.AddValue("algorithm", "Buffer sharing algorithm: DT, ST, CS, EDT. Default: DT", algo);
     cmd.AddValue("simSeed", "Seed for random generator. Default: 1", simSeed);
     cmd.AddValue("inFile", "Input file name", inputFile);
     cmd.AddValue("outFile", "Output file name", outputFile);
@@ -138,10 +251,11 @@ int main(int argc, char *argv[])
     cmd.AddValue("buffer", "Total buffer size in packets", buffer);
     cmd.AddValue("lineRate", "Line speed of output port", lineRate);
     cmd.AddValue("delay", "Delay of the point to point channel", delay);
-    cmd.AddValue("alpha", "the alpha in Dynamic Threshold", alpha);
+    cmd.AddValue("alpha", "the alpha in Dynamic Threshold", baseAlpha);
 
     cmd.Parse(argc, argv);
     RngSeedManager::SetSeed(simSeed);
+    dropThres = buffer;
 
     // output file for plotting
     AsciiTraceHelper asciiTraceHelper;
@@ -175,7 +289,7 @@ int main(int argc, char *argv[])
         uint32_t pos = i - 1;
         qdiscs[pos] = tch.Install(devices);
         Ptr<QueueDisc> q = qdiscs[pos].Get(0);
-        q->SetTotalBufferSize(buffer + 1);
+        q->SetTotalBufferSize(buffer);
         q->TraceConnectWithoutContext("PacketsInQueue", MakeBoundCallback(&TcPacketsInQueueTrace, pfile, qdiscs, pos));
         q->TraceConnectWithoutContext("Drop", MakeBoundCallback(&Drop, pfile, q, pos));
 
@@ -244,11 +358,6 @@ int main(int argc, char *argv[])
     Simulator::Stop(Seconds(simulationTime));
     Simulator::Run();
 
-    for (uint32_t i = 0; i < nPorts; i++)
-    {
-        ofile << 0 << " " << i << " " << PortPass[i] + PortLoss[i] << " " << PortPass[i] << " 0 0" << std::endl;
-    }
-
     monitor->CheckForLostPackets();
     Ptr<Ipv4FlowClassifier> classifier = DynamicCast<Ipv4FlowClassifier>(flowmon.GetClassifier());
     FlowMonitor::FlowStatsContainer stats = monitor->GetFlowStats();
@@ -266,19 +375,8 @@ int main(int argc, char *argv[])
         // std::cout << "  Throughput: " << i->second.rxBytes * 8.0 / (i->second.timeLastRxPacket - i->second.timeFirstTxPacket).GetSeconds() / 1024 / 1024 << " Mbps\n";
         // std::cout << "  StartTime:  " << i->second.timeFirstTxPacket.GetSeconds() << "\n";
         // std::cout << "  EndTime:    " << i->second.timeLastRxPacket.GetSeconds() << "\n";
-        ofile << 1 << " " << t.destinationPort - servPort << " " << i->second.timeFirstTxPacket.GetSeconds()
+        ofile << t.destinationPort - servPort << " " << i->second.timeFirstTxPacket.GetSeconds()
               << " " << i->second.timeLastTxPacket.GetSeconds() << " " << i->second.txPackets << " " << i->second.rxPackets << std::endl;
-        ns3::Histogram h = i->second.delayHistogram;
-        uint32_t nBins = h.GetNBins();
-        for (uint32_t i = 0; i < nBins; i++)
-        {
-            ofile << 2 << " " << t.destinationPort - servPort << " " << i << " " << h.GetBinStart(i) << " " << h.GetBinEnd(i) << " "
-                  << " " << h.GetBinCount(i) << std::endl;
-        }
-        ofile << 3 << " " << t.destinationPort - servPort << " " << i->second.rxBytes << " "
-              << i->second.timeFirstTxPacket.GetSeconds()
-              << " " << i->second.timeLastRxPacket.GetSeconds() << " "
-              << " " << i->second.rxBytes * 8.0 / (i->second.timeLastRxPacket - i->second.timeFirstTxPacket).GetSeconds() << std::endl;
     }
 
     Simulator::Destroy();
@@ -286,21 +384,21 @@ int main(int argc, char *argv[])
     // std::cout << "---------------" << algo << "---------------" << std::endl;
     // std::cout << inputFile << std::endl;
     // std::cout << "Packets received in each port" << std::endl;
-    // for (uint32_t i = 0; i < nPorts; i++)
-    // {
-    //     // std::cout << PortPass[i] << " ";
-    //     ofile << PortPass[i] - PortLoss[i] << " ";
-    // }
-    // // std::cout << std::endl;
+    for (uint32_t i = 0; i < nPorts; i++)
+    {
+        // std::cout << PortPass[i] << " ";
+        // ofile << PortPass[i] << " ";
+    }
+    // std::cout << std::endl;
     // ofile << std::endl;
 
-    // // std::cout << "Packets loss in each port" << std::endl;
-    // for (uint32_t i = 0; i < nPorts; i++)
-    // {
-    //     // std::cout << PortLoss[i] << " ";
-    //     ofile << PortLoss[i] << " ";
-    // }
-    // // std::cout << std::endl;
+    // std::cout << "Packets loss in each port" << std::endl;
+    for (uint32_t i = 0; i < nPorts; i++)
+    {
+        // std::cout << PortLoss[i] << " ";
+        // ofile << PortLoss[i] << " ";
+    }
+    // std::cout << std::endl;
     // ofile << std::endl;
     ofile.close();
 

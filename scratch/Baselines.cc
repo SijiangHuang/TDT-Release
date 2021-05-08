@@ -28,7 +28,6 @@
 #include "ns3/flow-monitor-module.h"
 #include "ns3/packet-sink.h"
 #include "ns3/ipv4-global-routing-helper.h"
-#include "ns3/timer.h"
 #include <fstream>
 #include <vector>
 #include <string>
@@ -37,74 +36,75 @@
 
 using namespace ns3;
 
-NS_LOG_COMPONENT_DEFINE("pushout");
+NS_LOG_COMPONENT_DEFINE("Baselines");
 
 // topology variables
-uint32_t nPorts = 16;
+uint32_t nPorts = 4;
 const uint32_t maxPorts = 16;
+
+// buffer variables
+std::string algo = "DT";
+uint32_t segmentSize = 1448;
+uint32_t buffer = 1048576; // 1MB
+float alpha = 1.0;
 
 // statistical variables
 std::vector<uint32_t> PortPass(nPorts, 0);
 std::vector<uint32_t> PortLoss(nPorts, 0);
-std::vector<uint32_t> PacketsInPort(nPorts, 0);
+std::vector<uint32_t> BytesInPort(nPorts, 0);
 
-uint32_t sampleInterval = 5;
-uint32_t sampleCounter = 0;
+uint32_t sampleInterval = 100;
+std::vector<uint32_t> sampleCounter(maxPorts, 0);
 
-// buffer variables
-std::string algo = "PO";
-uint32_t segmentSize = 1448;
-uint32_t buffer = 175; // 0.25MB
-uint32_t longestQueue = 0;
-float alpha = 1.0;
-
-void TcPacketsInQueueTrace(Ptr<OutputStreamWrapper> pfile, QueueDiscContainer *qdisc, uint32_t pos, uint32_t oldValue, uint32_t newValue)
+void TcBytesInQueueTrace(Ptr<OutputStreamWrapper> pfile, QueueDiscContainer *qdisc, uint32_t pos, uint32_t oldValue, uint32_t newValue)
 {
     if (oldValue > newValue)
     {
         PortPass[pos] += oldValue - newValue;
     }
-    uint32_t sumPackets = 0;
+    else
+    {
+        *pfile->GetStream() << 1 << " " << pos << " " << Simulator::Now().GetSeconds() << " " << newValue - oldValue << std::endl;
+    }
+
+    uint32_t sumBytes = 0;
     Ptr<QueueDisc> q = qdisc[pos].Get(0);
-    PacketsInPort[pos] += newValue - oldValue;
-    // std::cout << "Queue Length: ";
+    BytesInPort[pos] = newValue;
     for (uint32_t i = 0; i < nPorts; i++)
     {
-        sumPackets += PacketsInPort[i];
-        if (PacketsInPort[i] > PacketsInPort[longestQueue])
-        {
-            longestQueue = i;
-        }
-        // std::cout << PacketsInPort[i] << " ";
+        sumBytes += BytesInPort[i];
     }
-    // std::cout << std::endl;
+    q->SetTotalBufferUse(sumBytes);
 
-    if (sumPackets == buffer + 1)
+    sampleCounter[pos]++;
+    if (sampleCounter[pos] == sampleInterval)
     {
-        q = qdisc[longestQueue].Get(0);
-        Ptr<Queue<QueueDiscItem>> iq = q->GetInternalQueue(0);
-        Ptr<QueueDiscItem> p = iq->Remove();
-        sumPackets--;
+        sampleCounter[pos] = 0;
+        *pfile->GetStream() << 0 << " " << pos << " " << Simulator::Now().GetSeconds() << " " << BytesInPort[pos] << std::endl;
+        *pfile->GetStream() << 0 << " " << nPorts << " " << Simulator::Now().GetSeconds() << " " << sumBytes << std::endl;
     }
-    q->SetTotalBufferUse(sumPackets);
 
-    // *pfile->GetStream() << 0 << " " << pos << " " << Simulator::Now().GetSeconds() << " " << PacketsInPort[pos] << std::endl;
-    sampleCounter++;
-    if (sampleCounter == sampleInterval)
+    uint32_t threshold = buffer;
+    if (algo == "DT")
     {
-        sampleCounter = 0;
-        for (uint32_t i = 0; i < nPorts; i++)
-        {
-            *pfile->GetStream() << 0 << " " << i << " " << Simulator::Now().GetSeconds() << " " << PacketsInPort[i] << std::endl;
-        }
-        *pfile->GetStream() << 0 << " " << nPorts << " " << Simulator::Now().GetSeconds() << " " << sumPackets << std::endl;
+        threshold = (buffer > sumBytes) ? (alpha * (buffer - sumBytes)) : 0;
+    }
+    else if (algo == "ST")
+    {
+        threshold = buffer / nPorts;
+    }
+    for (uint32_t i = 0; i < nPorts; i++)
+    {
+        q = qdisc[i].Get(0);
+        q->SetThreshold(QueueSize(QueueSizeUnit::BYTES, threshold));
     }
 }
 
 void Drop(Ptr<OutputStreamWrapper> pfile, Ptr<QueueDisc> q, uint32_t pos, Ptr<const QueueDiscItem> p)
 {
-    PortLoss[pos]++;
-    *pfile->GetStream() << 1 << " " << pos << " " << Simulator::Now().GetSeconds() << " " << -1 << std::endl;
+    PortLoss[pos] += p->GetPacket()->GetSize();
+    *pfile->GetStream() << 1 << " " << pos << " " << Simulator::Now().GetSeconds() << " " << -int(p->GetPacket()->GetSize()) << std::endl;
+    // std::cout << Simulator::Now().GetSeconds() << " packet size of " << p->GetPacket()->GetSize() << " dropped in port " << pos << std::endl;
 }
 
 int main(int argc, char *argv[])
@@ -130,12 +130,12 @@ int main(int argc, char *argv[])
     std::string plotFile = "data/plot.txt";
 
     CommandLine cmd;
-    cmd.AddValue("algorithm", "Default: PO", algo);
+    cmd.AddValue("algorithm", "Buffer sharing algorithm: DT, ST, CS, EDT. Default: DT", algo);
     cmd.AddValue("simSeed", "Seed for random generator. Default: 1", simSeed);
     cmd.AddValue("inFile", "Input file name", inputFile);
     cmd.AddValue("outFile", "Output file name", outputFile);
     cmd.AddValue("plotFile", "Output file for plotting the buffer-usage", plotFile);
-    cmd.AddValue("buffer", "Total buffer size in packets", buffer);
+    cmd.AddValue("buffer", "Total buffer size in bytes", buffer);
     cmd.AddValue("lineRate", "Line speed of output port", lineRate);
     cmd.AddValue("delay", "Delay of the point to point channel", delay);
     cmd.AddValue("alpha", "the alpha in Dynamic Threshold", alpha);
@@ -175,8 +175,8 @@ int main(int argc, char *argv[])
         uint32_t pos = i - 1;
         qdiscs[pos] = tch.Install(devices);
         Ptr<QueueDisc> q = qdiscs[pos].Get(0);
-        q->SetTotalBufferSize(buffer + 1);
-        q->TraceConnectWithoutContext("PacketsInQueue", MakeBoundCallback(&TcPacketsInQueueTrace, pfile, qdiscs, pos));
+        q->SetTotalBufferSize(buffer);
+        q->TraceConnectWithoutContext("BytesInQueue", MakeBoundCallback(&TcBytesInQueueTrace, pfile, qdiscs, pos));
         q->TraceConnectWithoutContext("Drop", MakeBoundCallback(&Drop, pfile, q, pos));
 
         Ipv4AddressHelper address;
@@ -228,7 +228,7 @@ int main(int argc, char *argv[])
         rmt.SetTos(0xb8);
         AddressValue remoteAddress(rmt);
         onoff.SetAttribute("Remote", remoteAddress);
-        apps.Add(onoff.Install(nodes.Get(0)));
+        apps.Add(onoff.Install(nodes.Get(from)));
         apps.Start(Seconds(startTime));
         apps.Stop(Seconds(endTime));
     }
@@ -244,11 +244,6 @@ int main(int argc, char *argv[])
     Simulator::Stop(Seconds(simulationTime));
     Simulator::Run();
 
-    for (uint32_t i = 0; i < nPorts; i++)
-    {
-        ofile << 0 << " " << i << " " << PortPass[i] + PortLoss[i] << " " << PortPass[i] << " 0 0" << std::endl;
-    }
-
     monitor->CheckForLostPackets();
     Ptr<Ipv4FlowClassifier> classifier = DynamicCast<Ipv4FlowClassifier>(flowmon.GetClassifier());
     FlowMonitor::FlowStatsContainer stats = monitor->GetFlowStats();
@@ -256,53 +251,36 @@ int main(int argc, char *argv[])
     {
         Ipv4FlowClassifier::FiveTuple t = classifier->FindFlow(i->first);
 
-        // std::cout << "Flow " << i->first << " (" << t.sourceAddress << " -> " << t.destinationAddress << ") ("
-        //           << t.sourcePort << "->" << t.destinationPort << ")\n";
-        // std::cout << "  Tx Packets: " << i->second.txPackets << "\n";
-        // std::cout << "  Tx Bytes:   " << i->second.txBytes << "\n";
-        // std::cout << "  Tx Offered:  " << i->second.txBytes * 8.0 / (i->second.timeLastRxPacket - i->second.timeFirstTxPacket).GetSeconds() / 1024 / 1024 << " Mbps\n";
-        // std::cout << "  Rx Packets: " << i->second.rxPackets << "\n";
-        // std::cout << "  Rx Bytes:   " << i->second.rxBytes << "\n";
-        // std::cout << "  Throughput: " << i->second.rxBytes * 8.0 / (i->second.timeLastRxPacket - i->second.timeFirstTxPacket).GetSeconds() / 1024 / 1024 << " Mbps\n";
-        // std::cout << "  StartTime:  " << i->second.timeFirstTxPacket.GetSeconds() << "\n";
-        // std::cout << "  EndTime:    " << i->second.timeLastRxPacket.GetSeconds() << "\n";
-        ofile << 1 << " " << t.destinationPort - servPort << " " << i->second.timeFirstTxPacket.GetSeconds()
-              << " " << i->second.timeLastTxPacket.GetSeconds() << " " << i->second.txPackets << " " << i->second.rxPackets << std::endl;
-        ns3::Histogram h = i->second.delayHistogram;
-        uint32_t nBins = h.GetNBins();
-        for (uint32_t i = 0; i < nBins; i++)
-        {
-            ofile << 2 << " " << t.destinationPort - servPort << " " << i << " " << h.GetBinStart(i) << " " << h.GetBinEnd(i) << " "
-                  << " " << h.GetBinCount(i) << std::endl;
-        }
-        ofile << 3 << " " << t.destinationPort - servPort << " " << i->second.rxBytes << " "
-              << i->second.timeFirstTxPacket.GetSeconds()
-              << " " << i->second.timeLastRxPacket.GetSeconds() << " "
-              << " " << i->second.rxBytes * 8.0 / (i->second.timeLastRxPacket - i->second.timeFirstTxPacket).GetSeconds() << std::endl;
+        std::cout << "Flow " << i->first << " (" << t.sourceAddress << " -> " << t.destinationAddress << ") ("
+                  << t.sourcePort << "->" << t.destinationPort << ")\n";
+        std::cout << "  Tx Packets: " << i->second.txPackets << "\n";
+        std::cout << "  Tx Bytes:   " << i->second.txBytes << "\n";
+        std::cout << "  Tx Offered:  " << i->second.txBytes * 8.0 / (i->second.timeLastRxPacket - i->second.timeFirstTxPacket).GetSeconds() / 1024 / 1024 << " Mbps\n";
+        std::cout << "  Rx Packets: " << i->second.rxPackets << "\n";
+        std::cout << "  Rx Bytes:   " << i->second.rxBytes << "\n";
+        std::cout << "  Throughput: " << i->second.rxBytes * 8.0 / (i->second.timeLastRxPacket - i->second.timeFirstTxPacket).GetSeconds() / 1024 / 1024 << " Mbps\n";
+        std::cout << "  StartTime:  " << i->second.timeFirstTxPacket.GetSeconds() << "\n";
+        std::cout << "  EndTime:    " << i->second.timeLastRxPacket.GetSeconds() << "\n";
     }
+    ofile.close();
 
     Simulator::Destroy();
 
-    // std::cout << "---------------" << algo << "---------------" << std::endl;
-    // std::cout << inputFile << std::endl;
-    // std::cout << "Packets received in each port" << std::endl;
-    // for (uint32_t i = 0; i < nPorts; i++)
-    // {
-    //     // std::cout << PortPass[i] << " ";
-    //     ofile << PortPass[i] - PortLoss[i] << " ";
-    // }
-    // // std::cout << std::endl;
-    // ofile << std::endl;
+    std::cout << "---------------" << algo << "---------------" << std::endl;
+    std::cout << inputFile << std::endl;
+    std::cout << "Packets received in each port" << std::endl;
+    for (uint32_t i = 0; i < nPorts; i++)
+    {
+        std::cout << PortPass[i] << " ";
+    }
+    std::cout << std::endl;
 
-    // // std::cout << "Packets loss in each port" << std::endl;
-    // for (uint32_t i = 0; i < nPorts; i++)
-    // {
-    //     // std::cout << PortLoss[i] << " ";
-    //     ofile << PortLoss[i] << " ";
-    // }
-    // // std::cout << std::endl;
-    // ofile << std::endl;
-    ofile.close();
+    std::cout << "Packets loss in each port" << std::endl;
+    for (uint32_t i = 0; i < nPorts; i++)
+    {
+        std::cout << PortLoss[i] << " ";
+    }
+    std::cout << std::endl;
 
     return 0;
 }
