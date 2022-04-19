@@ -17,11 +17,11 @@ Buffer management in shared-buffer switches
 3. Set&Get current overall buffer usage
 
 #### Configgure&Build 
-- "./waf configure --disable-werror"
-- "./waf build"
+- ./waf configure --disable-werror
+- ./waf build
 
 #### Run Code
 - TDT&DT are implemented at scratch/TDT.cc
-- To run the example: "./waf --run "scratch/TDT --inFile=data/trace0.txt --lineRate=1Gbps --algorithm=TDT"
+- To run the example: ./waf --run "scratch/TDT --inFile=data/trace0.txt --lineRate=1Gbps --algorithm=TDT"
 - trace file (input), result file (output) in ./data
 - (enbale if necessary) logging in data/plot.txt
