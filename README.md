@@ -2,7 +2,7 @@
 
 Buffer management in shared-buffer switches
 
-#### Queue Threshold Control
+#### Overview: Queue Threshold Control
 
 - threshold control for fifo queue is implemented in the following source files:
 
@@ -15,3 +15,8 @@ Buffer management in shared-buffer switches
 1. Set&Get the current threshold for a fifo queue
 2. Set the overall buffer size limit
 3. Set&Get current overall buffer usage
+
+#### Run Code
+- TDT&DT are implemented at scratch/TDT.cc
+- To run the example: "./waf --run "scratch/TDT --inFile=data/trace0.txt --lineRate=1Gbps --algorithm=TDT"
+- trace file (input), result file (output) in ./data
