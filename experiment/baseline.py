@@ -10,18 +10,19 @@ transport = 'udp'
 # transport = 'tcp'
 
 
-def run_baseline_parallel(inFile, outFile, buffer, lineRate, delay,
-                          algorithm, plotFile, seed, alpha):
+def run_baseline_parallel(inFile, outFile, buffer, lineRate, delay, algorithm, plotFile, seed, alpha):
 
     if algorithm == 'TDT':
         filename = 'TDT_v3'
+    elif algorithm == 'TDT_2state':
+        filename = 'TDT_2_state'
     elif algorithm == 'PO':
         filename = 'pushout'
     else:
         filename = 'EDT'
     if transport == 'tcp':
         filename = 'tcp'
-        
+
     if algorithm == 'OP':
         algorithm = 'ST'
         buffer = 16 * buffer
@@ -63,10 +64,12 @@ def run_baseline(traceDir, lossSaveDir, plotDir, algorithms, inFiles,
     # pool.close()
     # pool.join()
 
-    with ThreadPool(8) as pool:
-        res=list(tqdm(pool.imap(run_baseline_wrap,args),total=len(args),desc='current progress: '))
+    with ThreadPool(10) as pool:
+        res = list(tqdm(pool.imap(run_baseline_wrap, args),
+                   total=len(args), desc='current progress: '))
     pool.close()
     pool.join()
+
 
 def loss_vs_burstlength():
 
@@ -114,25 +117,25 @@ def determine_baseline():
 
 def stochastic_flow():
 
-    traceDir = 'data/trace/stochastic/8Gbps_50%_250us/'
-    lossSaveDir = 'data/results/stochastic/8Gbps_50%_250us/loss/'
-    plotDir = 'data/results/stochastic/8Gbps_50%_250us/plot/'
+    # traceDir = 'data/trace/stochastic/50%_10G/'
+    # lossSaveDir = 'data/results/stochastic/50%_10G/'
+    # plotDir = 'data/results/stochastic/50%_10G/plot/'
 
     config = '30%_500us_100ms'
     config = '30%_250us_1'
-    # config = '8Gbps_30%_0'
+    config = '40%_10G_0618'
     traceDir = 'data/trace/stochastic/' + config + '/'
     saveDir = 'data/results/stochastic/' + config
+    config = '2021-12-18'
     lossSaveDir = 'data/results/stochastic/' + config + '/loss/'
-    plotDir = 'data/results/stochastic/'+ config +'/plot/'
+    plotDir = 'data/results/stochastic/' + config + '/plot/'
 
     if not os.path.exists(saveDir):
         os.makedirs(saveDir)
     if not os.path.exists(lossSaveDir):
         os.makedirs(lossSaveDir)
     if not os.path.exists(plotDir):
-        os.makedirs(plotDir)   
-
+        os.makedirs(plotDir)
 
     inFiles = []
     # for time in range(500, 1600, 100):
@@ -140,17 +143,17 @@ def stochastic_flow():
     #         inFiles.append(str(time) + 'us_' + str(seed))
     # inFiles = ['P+LN_20%', 'P+LN_50%']
     # inFiles = ['burst_test']
-    for i in range(50):
+    for i in range(10, 30):
         inFiles.append('trace' + str(i))
 
-    buffer = 667
-    lineRate = '1Gbps'
+    buffer = 1333
+    buffer = 2000
+    lineRate = '10Gbps'
     delay = '1ms'
     seed = 1
     alpha = 1.0
-    algorithms = ['DT', 'TDT', 'EDT', 'PO', 'ST', 'CS']
-    # algorithms = ['DT', 'TDT', 'EDT']
-    algorithms = ['OP']
+    algorithms = ['DT', 'TDT', 'EDT', 'PO', 'ST', 'CS', 'OP']
+    algorithms = ['DT', 'TDT', 'EDT', 'TDT_2state']
     run_baseline(traceDir, lossSaveDir, plotDir, algorithms,
                  inFiles, buffer, lineRate, delay, seed, alpha)
 
@@ -176,7 +179,7 @@ def tcp_baseline():
     if not os.path.exists(lossSaveDir):
         os.makedirs(lossSaveDir)
     if not os.path.exists(plotDir):
-        os.makedirs(plotDir)   
+        os.makedirs(plotDir)
     # for time in range(500, 1600, 100):
     #     for seed in range(5):
     #         inFiles.append(str(time) + 'us_' + str(seed))
@@ -191,7 +194,7 @@ def tcp_baseline():
     seed = 1
     alpha = 1.0
     algorithms = ['DT', 'TDT', 'EDT']
-    algorithms = ['TDT', 'EDT','CS','ST']
+    algorithms = ['TDT', 'EDT', 'CS', 'ST']
     run_baseline(traceDir, lossSaveDir, plotDir, algorithms,
                  inFiles, buffer, lineRate, delay, seed, alpha)
 

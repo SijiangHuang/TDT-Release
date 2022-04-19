@@ -11,3 +11,5 @@ waf3-*-*/
 # build files
 build/
 *.pyc
+
+./experiment
